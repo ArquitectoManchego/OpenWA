@@ -23,6 +23,8 @@ export interface MediaInput {
 }
 
 export interface IncomingMessage {
+  phoneNumber?: string;
+  pushName?: string;
   id: string;
   from: string;
   to: string;
@@ -204,6 +206,10 @@ export interface EngineEventCallbacks {
 }
 
 export interface IWhatsAppEngine {
+  getRecentChats?(): Promise<unknown[]>;
+  getChatHistory?(chatId: string, limit: number): Promise<unknown[]>;
+  downloadChatMedia?(messageId: string): Promise<{ data: string; mimetype: string }>;
+
   // Lifecycle
   initialize(callbacks: EngineEventCallbacks): Promise<void>;
   disconnect(): Promise<void>; // Closes browser but keeps session (can reconnect without QR)
@@ -293,4 +299,8 @@ export interface IWhatsAppEngine {
   getProduct(productId: string): Promise<Product | null>;
   sendProduct(chatId: string, productId: string, body?: string): Promise<MessageResult>;
   sendCatalog(chatId: string, body?: string): Promise<MessageResult>;
+
+  getRecentChats?(): Promise<any[]>;
+  getChatHistory?(chatId: string, limit?: number): Promise<any[]>;
+  downloadChatMedia?(messageId: string): Promise<any>;
 }

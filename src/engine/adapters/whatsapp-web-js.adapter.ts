@@ -124,6 +124,24 @@ export class WhatsAppWebJsAdapter extends EventEmitter implements IWhatsAppEngin
     this.client.on('authenticated', () => {
       this.setStatus(EngineStatus.AUTHENTICATING);
       this.qrCode = null;
+      setTimeout(async () => {
+        try {
+          const page = (this.client as any)?.pupPage;
+          if (page && (this.status as any) !== EngineStatus.READY) {
+            const isLoaded = await page.evaluate(() => {
+              return !!(window as any).require && (
+                !!(window as any).require('WAWebSendMsgChatAction') ||
+                !!(window as any).require('WAWebCollections')
+              );
+            }).catch(() => false);
+            if (isLoaded && (this.status as any) !== EngineStatus.READY) {
+              this.logger.log('WhatsApp Web core modules confirmed, marking EngineStatus.READY');
+              this.setStatus(EngineStatus.READY);
+              this.callbacks.onReady?.(this.phoneNumber || '', this.pushName || '');
+            }
+          }
+        } catch (_) {}
+      }, 5000);
     });
 
     this.client.on('ready', () => {
@@ -272,9 +290,11 @@ export class WhatsAppWebJsAdapter extends EventEmitter implements IWhatsAppEngin
   async sendTextMessage(chatId: string, text: string): Promise<MessageResult> {
     this.ensureReady();
     const msg = await this.client!.sendMessage(chatId, text);
+    const id = (msg as any)?.id?._serialized || (typeof (msg as any)?.id === 'string' ? (msg as any).id : null) || `true_${chatId}_${Date.now()}`;
+    const timestamp = (msg as any)?.timestamp || Math.floor(Date.now() / 1000);
     return {
-      id: msg.id._serialized,
-      timestamp: msg.timestamp,
+      id,
+      timestamp,
     };
   }
 
@@ -316,9 +336,11 @@ export class WhatsAppWebJsAdapter extends EventEmitter implements IWhatsAppEngin
       caption: media.caption,
     });
 
+    const id = (msg as any)?.id?._serialized || (typeof (msg as any)?.id === 'string' ? (msg as any).id : null) || `true_${chatId}_${Date.now()}`;
+    const timestamp = (msg as any)?.timestamp || Math.floor(Date.now() / 1000);
     return {
-      id: msg.id._serialized,
-      timestamp: msg.timestamp,
+      id,
+      timestamp,
     };
   }
 
@@ -434,9 +456,11 @@ export class WhatsAppWebJsAdapter extends EventEmitter implements IWhatsAppEngin
     const msg = await this.client!.sendMessage(chatId, messageMedia, {
       sendMediaAsSticker: true,
     });
+    const id = (msg as any)?.id?._serialized || (typeof (msg as any)?.id === 'string' ? (msg as any).id : null) || `true_${chatId}_${Date.now()}`;
+    const timestamp = (msg as any)?.timestamp || Math.floor(Date.now() / 1000);
     return {
-      id: msg.id._serialized,
-      timestamp: msg.timestamp,
+      id,
+      timestamp,
     };
   }
 
@@ -913,11 +937,107 @@ export class WhatsAppWebJsAdapter extends EventEmitter implements IWhatsAppEngin
     throw new Error('sendCatalog not yet implemented in whatsapp-web.js adapter');
   }
 
+  async getRecentChats(): Promise<any[]> {
+    this.ensureReady();
+    try {
+      const chats = await this.client!.getChats();
+      return chats.map(chat => ({
+        id: (chat as any).id?._serialized || (chat as any).id,
+        name: chat.name || (chat as any).formattedTitle || (chat as any).id?.user || 'Sin Nombre',
+        phone: (chat as any).id?.user,
+        isGroup: chat.isGroup,
+        unreadCount: chat.unreadCount,
+        timestamp: chat.timestamp,
+        lastMessage: chat.lastMessage ? {
+          body: (chat.lastMessage as any).body || '',
+          timestamp: (chat.lastMessage as any).timestamp,
+          fromMe: (chat.lastMessage as any).fromMe
+        } : null
+      }));
+    } catch (err: any) {
+      this.logger.warn(`client.getChats() threw (${err?.message || err}), attempting safe page evaluate fallback`);
+      try {
+        if ((this.client as any)?.pupPage) {
+          const rawChats = await (this.client as any).pupPage.evaluate(() => {
+            try {
+              const collection = (window as any).require?.('WAWebCollections')?.Chat || (window as any).Store?.Chat;
+              const models = collection?.getModelsArray ? collection.getModelsArray() : (collection?.models || []);
+              return models.slice(0, 200).map((c: any) => ({
+                id: c.id?._serialized || (typeof c.id === 'string' ? c.id : c.id?.user ? `${c.id.user}@c.us` : ''),
+                name: c.name || c.formattedTitle || c.__x_formattedTitle || c.contact?.pushname || c.contact?.name || c.id?.user || 'Sin Nombre',
+                phone: c.id?.user,
+                isGroup: !!c.isGroup,
+                unreadCount: c.unreadCount || 0,
+                timestamp: c.t || c.timestamp || Math.floor(Date.now() / 1000),
+                lastMessage: c.lastReceivedKey ? {
+                  body: c.previewMessage?.body || '',
+                  timestamp: c.t || Math.floor(Date.now() / 1000),
+                  fromMe: false
+                } : null
+              })).filter((c: any) => c.id);
+            } catch (evalErr: any) {
+              return [];
+            }
+          });
+          if (Array.isArray(rawChats) && rawChats.length > 0) {
+            return rawChats;
+          }
+        }
+      } catch (fallbackErr: any) {
+        this.logger.error('Safe evaluate fallback failed:', fallbackErr.message);
+      }
+      return [];
+    }
+  }
+
+  async getChatHistory(chatId: string, limit: number = 100): Promise<any[]> {
+    this.ensureReady();
+    try {
+      const chat = await this.client!.getChatById(chatId);
+      if (!chat) return [];
+      const messages = await chat.fetchMessages({ limit });
+      return messages.map(msg => ({
+        id: (msg as any).id?._serialized || (msg as any).id,
+        body: (msg as any).body || '',
+        from: (msg as any).from,
+        to: (msg as any).to,
+        fromMe: (msg as any).fromMe,
+        timestamp: (msg as any).timestamp,
+        hasMedia: (msg as any).hasMedia,
+        type: (msg as any).type,
+        mediaUrl: null
+      }));
+    } catch (err: any) {
+      this.logger.error('Failed to get chat history:', err.message);
+      return [];
+    }
+  }
+
+  async downloadChatMedia(messageId: string): Promise<any> {
+    this.ensureReady();
+    try {
+      const msg = await this.client!.getMessageById(messageId);
+      if (!msg || !msg.hasMedia) return null;
+      const media = await msg.downloadMedia();
+      return {
+        mimetype: media.mimetype,
+        data: media.data,
+        filename: media.filename
+      };
+    } catch (err: any) {
+      this.logger.error('Failed to download media:', err.message);
+      return null;
+    }
+  }
+
   /* eslint-enable @typescript-eslint/require-await, @typescript-eslint/no-unused-vars */
 
   private ensureReady(): void {
-    if (this.status !== EngineStatus.READY || !this.client) {
-      throw new Error('WhatsApp client is not ready');
+    if (this.status === EngineStatus.READY && this.client) return;
+    const page = (this.client as any)?.pupPage;
+    if (this.client && page && (this.status === EngineStatus.AUTHENTICATING || this.status === EngineStatus.READY)) {
+      return;
     }
+    throw new Error('WhatsApp client is not ready');
   }
 }

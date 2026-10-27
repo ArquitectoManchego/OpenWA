@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Delete, Param, Body, HttpCode, HttpStatus } from '@nestjs/common';
+import { Controller, Query, BadRequestException, Get, Post, Delete, Param, Body, HttpCode, HttpStatus } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiParam } from '@nestjs/swagger';
 import { SessionService } from './session.service';
 import { CreateSessionDto, SessionResponseDto, QRCodeResponseDto } from './dto';
@@ -151,6 +151,28 @@ export class SessionController {
       sessionId: id,
     });
     return qrCode;
+  }
+
+  @Get(':id/chats')
+  async crmChats(@Param('id') id: string) {
+    const engine = this.sessionService.getEngine(id);
+    if (!engine?.getRecentChats) throw new BadRequestException('Engine unavailable');
+    return engine.getRecentChats();
+  }
+  @Get(':id/history')
+  async crmHistory(@Param('id') id: string, @Query('chatId') chatId: string, @Query('limit') limit?: string) {
+    if (!/^[0-9]+@(c\.us|lid)$/.test(chatId)) throw new BadRequestException('Invalid chat ID');
+    const count = Number(limit || 100);
+    if (!Number.isInteger(count) || count < 1 || count > 500) throw new BadRequestException('Invalid limit');
+    const engine = this.sessionService.getEngine(id);
+    if (!engine?.getChatHistory) throw new BadRequestException('Engine unavailable');
+    return engine.getChatHistory(chatId, count);
+  }
+  @Get(':id/media/:messageId')
+  async crmMedia(@Param('id') id: string, @Param('messageId') messageId: string) {
+    const engine = this.sessionService.getEngine(id);
+    if (!engine?.downloadChatMedia) throw new BadRequestException('Engine unavailable');
+    return engine.downloadChatMedia(messageId);
   }
 
   @Get(':id/groups')

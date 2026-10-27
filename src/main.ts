@@ -64,8 +64,12 @@ STORAGE_PATH=./data/media
   dotenv.config({ path: generatedEnvPath, override: false });
 }
 
+import { json, urlencoded } from 'express';
+
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create(AppModule, { bodyParser: false });
+  app.use(json({ limit: '50mb' }));
+  app.use(urlencoded({ limit: '50mb', extended: true }));
 
   // Enable shutdown hooks for graceful shutdown
   app.enableShutdownHooks();

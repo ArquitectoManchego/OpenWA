@@ -25,10 +25,12 @@ export class AuthService implements OnModuleInit {
     let displayKey: string;
     let isNewKey = false;
 
+    const configuredKey = process.env.OPENWA_API_KEY || process.env.API_KEY || process.env.API_MASTER_KEY;
     if (count === 0) {
-      // Use predictable key in development, random key in production
+      // Use configured key, or predictable key in development, random key in production
       displayKey =
-        process.env.NODE_ENV === 'production' ? `owa_k1_${randomBytes(32).toString('hex')}` : 'dev-admin-key';
+        configuredKey ||
+        (process.env.NODE_ENV === 'production' ? `owa_k1_${randomBytes(32).toString('hex')}` : 'dev-admin-key');
 
       await this.seedApiKey(displayKey, 'Default Admin Key', ApiKeyRole.ADMIN);
       isNewKey = true;
@@ -40,6 +42,13 @@ export class AuthService implements OnModuleInit {
         this.logger.warn('Could not save API key file', { error: String(err) });
       }
     } else {
+      if (configuredKey) {
+        const keyHash = this.hashKey(configuredKey);
+        const existing = await this.apiKeyRepository.findOne({ where: { keyHash } });
+        if (!existing) {
+          await this.seedApiKey(configuredKey, 'Configured Admin Key', ApiKeyRole.ADMIN);
+        }
+      }
       // Read saved API key from file if exists
       if (existsSync(API_KEY_FILE)) {
         try {
